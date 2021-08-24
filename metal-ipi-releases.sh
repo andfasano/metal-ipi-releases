@@ -33,7 +33,7 @@ jobs=$(jq --arg nf $filter -r '[ .[] | select(.job|test($nf)) | select(.type=="p
 # For every distinct job, get the latest build in case it failed
 entry=""
 for k in $(echo $jobs | jq -r '[ .[].job ] | unique | .[]'); do
-    entry=${entry}$(echo $jobs | jq --arg job "$k" -r '[ .[] | select(.job|test($job)) | select(.state=="failure")] | sort_by(.job) | max_by(.finished) | select(. != null)')
+    entry=${entry}$(echo $jobs | jq --arg job "$k" -r '[ .[] | select(.job==$job) | select(.state=="failure")] | sort_by(.job) | max_by(.finished) | select(. != null)')
 done 
 
 if [ -z "$entry" ]; then
