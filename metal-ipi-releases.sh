@@ -1,6 +1,6 @@
 #!/bin/bash
 
-function showHelp() {\
+function showHelp() {
     echo "This script gets the latest release build failures for metal-ipi jobs"
     echo "(only if there isn't any newer passing build for that job)"
     echo 
@@ -17,28 +17,70 @@ if [ "$1" = "-h" ]; then
   exit 1
 fi
 
-# Download the current Prow status
-if [ "$1" = "-c" ]; then 
-    ver=$2
-else
-    ver=$1
-    echo "Fetching results from Prow, please wait"
-    curl -s https://deck-ci.apps.ci.l2s4.p1.openshiftapps.com/\data.js > .prow-jobs.json
-fi
+CACHE_FOLDER=.releases
+mkdir -p $CACHE_FOLDER
 
-# Filter results by job name
+function fetchReleasesConfig() {
+    MAJOR_VERSION=4
+    BASE_MINOR_VERSION=6
+    releases_url="https://raw.githubusercontent.com/openshift/release/master/core-services/release-controller/_releases/"
+
+    echo "Fetching release jobs configurations"
+
+    for (( i=$BASE_MINOR_VERSION; ;i++)); do
+        file="release-ocp-$MAJOR_VERSION.$i.json"
+        url=$releases_url$file
+        if ! curl -o .releases/$file --silent --fail "$url"; then
+            break
+        fi
+    done
+}
+
+function checkForRefresh() {
+    # Download the current Prow status
+    if [ "$1" = "-c" ]; then 
+        ver=$2
+    else
+        ver=$1
+        echo "Fetching latest job results from Prow, please wait"
+        curl -s https://deck-ci.apps.ci.l2s4.p1.openshiftapps.com/\data.js > .prow-jobs.json
+        fetchReleasesConfig
+    fi
+}
+
+function getJobNames() {
+    for config in "$CACHE_FOLDER/*"; do
+        metalBlocking=${metalBlocking}$(jq -r '.verify | with_entries(select((.key|test("metal-ipi")) and (.value.optional == null or .value.optional == false))) | .[] | .prowJob.name' $config)
+        metalInforming=${metalInforming}$(jq -r '.verify | with_entries(select((.key|test("metal-ipi")) and (.value.optional == true))) | .[] | .prowJob.name' $config)
+    done
+}
+
+checkForRefresh $@
+getJobNames
+
+# Prefilter metal jobs by name/version
 filter="periodic-ci-openshift-release-master-nightly-$ver.*metal-ipi.*"
-jobs=$(jq --arg nf $filter -r '[ .[] | select(.job|test($nf)) | select(.type=="periodic")]' .prow-jobs.json)
+allCurrentMetalPeriodics=$(jq --arg nf $filter -r '[ .[] | select(.job|test($nf)) | select(.type=="periodic")]' .prow-jobs.json)
 
-# For every distinct job, get the latest build in case it failed
-entry=""
-for k in $(echo $jobs | jq -r '[ .[].job ] | unique | .[]'); do
-    entry=${entry}$(echo $jobs | jq --arg job "$k" -r '[ .[] | select(.job==$job) | select(.state=="failure")] | sort_by(.job) | max_by(.finished) | select(. != null)')
-done 
+function showResultsFor () {
 
-if [ -z "$entry" ]; then
-    echo "No failures found!"
-else
-    echo "Failures:"
-    echo $entry | jq -r '([.job, .url]) | @tsv' | column -t
-fi
+    local jobs
+    for job in $1; do
+        jobs=${jobs}$(echo $allCurrentMetalPeriodics | jq --arg nf $job -r '[ .[] | select(.job == $nf)]')
+    done
+
+    # For every distinct job, get the latest build in case it failed
+    entry=""
+    for k in $(echo $jobs | jq -r '[ .[].job ] | unique | .[]'); do
+        entry=${entry}$(echo $jobs | jq --arg job "$k" -r '[ .[] | select(.job==$job) | select(.state=="failure")] | sort_by(.job) | max_by(.finished) | select(. != null)')
+    done 
+
+    if [ ! -z "$entry" ]; then
+        echo
+        echo "$2 failures:"
+        echo $entry | jq -r '([.job, .finished, .url]) | @tsv' | column -t
+    fi
+}
+
+showResultsFor "$metalInforming" "Informing"
+showResultsFor "$metalBlocking" "Blocking"
