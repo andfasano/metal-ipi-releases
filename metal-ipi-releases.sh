@@ -72,12 +72,13 @@ function showResultsFor () {
     # For every distinct job, get the latest build in case it failed
     entry=""
     for k in $(echo $jobs | jq -r '[ .[].job ] | unique | .[]'); do
-        entry=${entry}$(echo $jobs | jq --arg job "$k" -r '[ .[] | select(.job==$job) | select(.state=="failure")] | sort_by(.job) | max_by(.finished) | select(. != null)')
+        entry=${entry}$(echo $jobs | jq --arg job "$k" -r '[ .[] | select(.job==$job)] | sort_by(.job) | max_by(.finished) | select((. != null) and (.state=="failure"))')
     done 
 
     if [ ! -z "$entry" ]; then
         echo
         echo "$2 failures:"
+        echo "------------------------------"
         echo $entry | jq -r '([.job, .finished, .url]) | @tsv' | column -t
     fi
 }
