@@ -51,7 +51,8 @@ function checkForRefresh() {
 function getJobNames() {
     for config in "$CACHE_FOLDER/*"; do
         metalBlocking=${metalBlocking}$(jq -r '.verify | with_entries(select((.key|test("metal-ipi")) and (.value.optional == null or .value.optional == false))) | .[] | .prowJob.name' $config)
-        metalInforming=${metalInforming}$(jq -r '.verify | with_entries(select((.key|test("metal-ipi")) and (.value.optional == true))) | .[] | .prowJob.name' $config)
+        metalInforming=${metalInforming}$(jq -r '.verify | with_entries(select((.key|test("metal-ipi")) and (.value.optional == true) and (.value.upgrade == null or .value.upgrade == false))) | .[] | .prowJob.name' $config)
+        metalUpgrades=${metalUpgrades}$(jq -r '.verify | with_entries(select((.key|test("metal-ipi")) and (.value.optional == true) and (.value.upgrade == true))) | .[] | .prowJob.name' $config)
     done
 }
 
@@ -60,7 +61,7 @@ getJobNames
 
 # Prefilter metal jobs by name/version
 filter="periodic-ci-openshift-release-master-nightly-$ver.*metal-ipi.*"
-allCurrentMetalPeriodics=$(jq --arg nf $filter -r '[ .[] | select(.job|test($nf)) | select(.type=="periodic")]' .prow-jobs.json)
+allCurrentMetalPeriodics=$(jq --arg nf $filter -r '[ .[] | select(.job|test($nf)) | select((.type=="periodic") and (.state!="pending"))]' .prow-jobs.json)
 
 function showResultsFor () {
 
@@ -72,16 +73,17 @@ function showResultsFor () {
     # For every distinct job, get the latest build in case it failed
     entry=""
     for k in $(echo $jobs | jq -r '[ .[].job ] | unique | .[]'); do
-        entry=${entry}$(echo $jobs | jq --arg job "$k" -r '[ .[] | select(.job==$job)] | sort_by(.job) | max_by(.finished) | select((. != null) and (.state=="failure"))')
+        entry=${entry}$(echo $jobs | jq --arg job "$k" -r '[ .[] | select(.job==$job)] | sort_by(.job) | max_by(.started) | select((. != null) and (.state=="failure"))')
     done 
 
     if [ ! -z "$entry" ]; then
         echo
         echo "$2 failures:"
         echo "------------------------------"
-        echo $entry | jq -r '([.job, .finished, .url]) | @tsv' | column -t
+        echo $entry | jq -r '([.job, (.started|tonumber|todateiso8601), .url]) | @tsv' | column -t
     fi
 }
 
 showResultsFor "$metalInforming" "Informing"
+showResultsFor "$metalUpgrades" "Informing (Upgrade)"
 showResultsFor "$metalBlocking" "Blocking"
