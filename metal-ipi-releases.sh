@@ -56,6 +56,11 @@ function getJobNames() {
     done
 }
 
+function workflowStepFailed() {
+    stepJson=$(curl -s "$1/$2/finished.json")
+    [[ $(echo $stepJson | jq -e '.passed' 2>&1 ) == "false" ]];
+}
+
 checkForRefresh $@
 getJobNames
 
@@ -73,17 +78,43 @@ function showResultsFor () {
     # For every distinct job, get the latest build in case it failed
     entry=""
     for k in $(echo $jobs | jq -r '[ .[].job ] | unique | .[]'); do
-        entry=${entry}$(echo $jobs | jq --arg job "$k" -r '[ .[] | select(.job==$job)] | sort_by(.job) | max_by(.started) | select((. != null) and (.state=="failure"))')
-    done 
 
-    if [ ! -z "$entry" ]; then
-        echo
-        echo "$2 failures:"
-        echo "------------------------------"
-        echo $entry | jq -r '([.job, (.started|tonumber|todateiso8601), .url]) | @tsv' | column -t
-    fi
+        topFailingJob=$(echo $jobs | jq --arg job "$k" -r '[ .[] | select(.job==$job)] | sort_by(.job) | max_by(.started) | select((. != null) and (.state=="failure"))')
+        
+        if [ ! -z "$topFailingJob" ]; then
+
+            jobsInfo=($(echo $topFailingJob | jq -r '.job, .build_id, (.started|tonumber|todateiso8601), .url'))
+            jobName=${jobsInfo[0]}
+            version=$(echo ${jobName} | sed -E 's/.[^[[:digit:]]*]*-([[:digit:]]\.[[:digit:]]+)-.*/\1/')
+            buildId=${jobsInfo[1]}
+            started=${jobsInfo[2]}
+            url=${jobsInfo[3]}
+            jobSafeName=$(echo $jobName | sed  's/.*\(e2e.*\)/\1/')
+            jobDisplayName=$(echo ${jobName} | sed -E 's/.[^[[:digit:]]*]*-[[:digit:]]\.[[:digit:]]+-(.*)/\1/')
+            
+            # Look for failure reason
+            reason="Unkown failure, please triage"
+            link=$url
+            baseArtifactsUrl="https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs/origin-ci-test/logs/${jobName}/${buildId}/artifacts/${jobSafeName}"
+
+            if workflowStepFailed $baseArtifactsUrl "baremetalds-e2e-test"; then
+                reason="e2e test failure"
+            elif workflowStepFailed $baseArtifactsUrl "baremetalds-packet-setup"; then
+                reason="Packet setup failed"            
+                link="$baseArtifactsUrl/baremetalds-packet-setup/"
+            elif workflowStepFailed $baseArtifactsUrl "baremetalds-devscripts-setup"; then
+                reason="Cluster installation failed"
+                link="$baseArtifactsUrl/baremetalds-devscripts-setup/artifacts/root/dev-scripts/logs/"
+            fi
+            
+            artifactsLink="\e]8;;$link\aLink\e]8;;\a"
+            printf "%-6s%-11s%-50s%-23s%-32s%-b\n" "$version" "$2" "$jobDisplayName" "$started" "$reason" "$artifactsLink"  
+        fi
+        
+    done 
 }
 
+printf "%-6s%-11s%-50s%-23s%-32s%-b\n" "VER" "TYPE" "JOB" "STARTED" "FAILURE REASON" "ARTIFACTS"
 showResultsFor "$metalInforming" "Informing"
-showResultsFor "$metalUpgrades" "Informing (Upgrade)"
+showResultsFor "$metalUpgrades" "Upgrade"
 showResultsFor "$metalBlocking" "Blocking"
