@@ -68,9 +68,11 @@ getJobNames
 filter="periodic-ci-openshift-release-master-nightly-$ver.*metal-ipi.*"
 allCurrentMetalPeriodics=$(jq --arg nf $filter -r '[ .[] | select(.job|test($nf)) | select((.type=="periodic") and (.state!="pending"))]' .prow-jobs.json)
 
-fmt="%-6s%-11s%-50s%-23s%-32s%-11b  %-11b\n"
+fmt="%-6s%-11s%-50s%-23s%-32s%-11b  %-11b  %-11b\n"
 
 function showResultsFor () {
+
+    jobType=$2
 
     local jobs
     for job in $1; do
@@ -111,7 +113,8 @@ function showResultsFor () {
             
             artifactsLink="\e]8;;$link\aartifacts\e]8;;\a"
             dashboardLink="\e]8;;$url\adashboard\e]8;;\a"
-            printf "$fmt" "$version" "$2" "$jobDisplayName" "$started" "$reason" "$dashboardLink" "$artifactsLink"
+            sippyLink="\e]8;;https://sippy.ci.openshift.org/sippy-ng/jobs/$version/analysis?filters=%7B%22items%22%3A%5B%7B%22columnField%22%3A%22name%22%2C%22operatorValue%22%3A%22equals%22%2C%22value%22%3A%22$jobName%22%7D%5D%7D\asippy\e]8;;\a"              
+            printf "$fmt" "$version" "$jobType" "$jobDisplayName" "$started" "$reason" "$dashboardLink" "$artifactsLink" "$sippyLink"
         fi
         
     done 
