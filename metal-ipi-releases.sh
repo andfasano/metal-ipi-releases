@@ -25,7 +25,7 @@ function fetchReleasesConfig() {
     BASE_MINOR_VERSION=6
     releases_url="https://raw.githubusercontent.com/openshift/release/master/core-services/release-controller/_releases/"
 
-    echo "Fetching release jobs configurations"
+    echo "Fetching release metal-ipi jobs configurations"
 
     for (( i=$BASE_MINOR_VERSION; ;i++)); do
         file="release-ocp-$MAJOR_VERSION.$i.json"
@@ -68,6 +68,8 @@ getJobNames
 filter="periodic-ci-openshift-release-master-nightly-$ver.*metal-ipi.*"
 allCurrentMetalPeriodics=$(jq --arg nf $filter -r '[ .[] | select(.job|test($nf)) | select((.type=="periodic") and (.state!="pending"))]' .prow-jobs.json)
 
+fmt="%-6s%-11s%-50s%-23s%-32s%-11b  %-11b\n"
+
 function showResultsFor () {
 
     local jobs
@@ -107,14 +109,15 @@ function showResultsFor () {
                 link="$baseArtifactsUrl/baremetalds-devscripts-setup/artifacts/root/dev-scripts/logs/"
             fi
             
-            artifactsLink="\e]8;;$link\aLink\e]8;;\a"
-            printf "%-6s%-11s%-50s%-23s%-32s%-b\n" "$version" "$2" "$jobDisplayName" "$started" "$reason" "$artifactsLink"  
+            artifactsLink="\e]8;;$link\aartifacts\e]8;;\a"
+            dashboardLink="\e]8;;$url\adashboard\e]8;;\a"
+            printf "$fmt" "$version" "$2" "$jobDisplayName" "$started" "$reason" "$dashboardLink" "$artifactsLink"
         fi
         
     done 
 }
 
-printf "%-6s%-11s%-50s%-23s%-32s%-b\n" "VER" "TYPE" "JOB" "STARTED" "FAILURE REASON" "ARTIFACTS"
+printf "$fmt" "VER" "TYPE" "JOB" "STARTED" "FAILURE REASON" "LINKS"
 showResultsFor "$metalInforming" "Informing"
 showResultsFor "$metalUpgrades" "Upgrade"
 showResultsFor "$metalBlocking" "Blocking"
