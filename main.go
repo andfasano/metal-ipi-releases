@@ -1,15 +1,188 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
+	"net/http"
+	"os"
 	"os/exec"
+	"path"
+	"path/filepath"
 	"runtime"
 	"strings"
 
 	ui "github.com/gizak/termui/v3"
 	"github.com/gizak/termui/v3/widgets"
 )
+
+const (
+	CACHE_DIR string = ".releases"
+)
+
+type ProwJob struct {
+	Name string `json:"name"`
+}
+
+type VerifyEntry struct {
+	ProwJob  `json:"prowJob"`
+	Optional bool `json:"optional,omitempty"`
+	Upgrade  bool `json:"upgrade,omitempty"`
+}
+
+type ConfigFile struct {
+	Verify map[string]VerifyEntry `json:"verify"`
+}
+
+type JobNames struct {
+	Blocking  []string
+	Informing []string
+	Upgrades  []string
+}
+
+func DownloadFile(filepath string, url string) error {
+	log.Println("downloading", url)
+
+	// Get the data
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode > 399 {
+		return errors.New("failed to download " + url)
+	}
+
+	// Create the file
+	out, err := os.Create(filepath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	// Write the body to file
+	_, err = io.Copy(out, resp.Body)
+	return err
+}
+
+func PathExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func EnsureDir(path string) error {
+	exists, err := PathExists(path)
+	if err != nil {
+		return err
+	}
+
+	if !exists {
+		log.Println("creating dir", path)
+		err := os.Mkdir(path, os.ModePerm)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func fetchReleasesConfig() {
+	majorVersion := 4
+	baseMinorVersion := 6
+	releasesUrl := "https://raw.githubusercontent.com/openshift/release/master/core-services/release-controller/_releases/"
+
+	EnsureDir(CACHE_DIR)
+
+	for i := baseMinorVersion; ; i++ {
+		file := fmt.Sprintf("release-ocp-%d.%d.json", majorVersion, i)
+		url := releasesUrl + file
+		err := DownloadFile(path.Join(CACHE_DIR, file), url)
+		if err != nil {
+			break
+		}
+	}
+
+}
+
+func checkForRefresh() error {
+	err := DownloadFile(
+		".prow-jobs.json",
+		"https://deck-ci.apps.ci.l2s4.p1.openshiftapps.com/data.js",
+	)
+
+	if err != nil {
+		return err
+	}
+	fetchReleasesConfig()
+
+	return nil
+}
+
+func getJobNames() (JobNames, error) {
+	jobs := JobNames{}
+	configFiles, err := ioutil.ReadDir(CACHE_DIR)
+
+	if err != nil {
+		return jobs, err
+	}
+
+	for _, configFile := range configFiles {
+		configFilePath := filepath.Join(CACHE_DIR, configFile.Name())
+		configContents, err := ioutil.ReadFile(configFilePath)
+		if err != nil {
+			return jobs, err
+		}
+
+		var config ConfigFile
+		err = json.Unmarshal(configContents, &config)
+		if err != nil {
+			return jobs, err
+		}
+
+		for k, entry := range config.Verify {
+			if !strings.Contains(k, "metal-ipi") {
+				continue
+			}
+			if entry.Optional && entry.Upgrade {
+				// upgrade
+				jobs.Upgrades = append(jobs.Upgrades, entry.ProwJob.Name)
+				continue
+			}
+
+			if entry.Optional && !entry.Upgrade {
+				jobs.Informing = append(jobs.Informing, entry.ProwJob.Name)
+				continue
+			}
+
+			if !entry.Optional {
+				// blocking
+				jobs.Blocking = append(jobs.Blocking, entry.ProwJob.Name)
+				fmt.Println(entry.ProwJob.Name)
+				continue
+			}
+		}
+	}
+
+	return jobs, nil
+}
+
+func workflowStepFailed() {}
+
+func showResultsFor(jobs JobNames) {
+}
+
+// UI
 
 func OpenLinkInBrowser(url string) {
 	var err error
@@ -134,7 +307,6 @@ func Redraw(state State) {
 }
 
 func main() {
-
 	if err := ui.Init(); err != nil {
 		log.Fatalf("failed to initialize termui: %v", err)
 	}
