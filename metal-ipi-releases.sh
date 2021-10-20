@@ -37,6 +37,7 @@ function fetchReleasesConfig() {
 }
 
 function checkForRefresh() {
+    echo "metal-ipi-releases.sh starting on $(date) ($(date --utc))"
     # Download the current Prow status
     if [ "$1" = "-c" ]; then 
         ver=$2
@@ -124,3 +125,4 @@ printf "$fmt" "VER" "TYPE" "JOB" "STARTED" "FAILURE REASON" "LINKS"
 showResultsFor "$metalInforming" "Informing"
 showResultsFor "$metalUpgrades" "Upgrade"
 showResultsFor "$metalBlocking" "Blocking"
+echo "metal-ipi-releases.sh finished on $(date) ($(date --utc))"
